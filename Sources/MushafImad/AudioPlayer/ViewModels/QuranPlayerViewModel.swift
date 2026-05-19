@@ -54,23 +54,29 @@ public final class QuranPlayerViewModel: ObservableObject {
     private var statusObservation: NSKeyValueObservation?
     private var timeControlObservation: NSKeyValueObservation?
     private var endPlaybackObserver: Any?
+
     private var pendingSeekVerse: Int?
     private var pendingResumeVerse: Int?
+    private var pendingResumeTask: Task<Void, Never>?
     private var prefetchTask: Task<Void, Never>?
     private var prepareTask: Task<Void, Never>?
     private var lastPrefetchKey: String?
-
     private var shouldResumeAfterSeek = false
     private var shouldAutoStart = true
 
-    // background/lock‑screen support is delegated to a helper so the view model
+    // Background/lock-screen support is delegated to a helper so the view model
     // remains focused on playback logic. The helper lazily configures itself
     // when startIfNeeded(autoPlay:) is called.
     private var backgroundHelper: BackgroundPlaybackHelper?
 
     // MARK: - Init / Deinit
 
-    public init(baseURL: URL? = nil, chapterNumber: Int = 0, chapterName: String = "", reciterName: String? = nil) {
+    public init(
+        baseURL: URL? = nil,
+        chapterNumber: Int = 0,
+        chapterName: String = "",
+        reciterName: String? = nil
+    ) {
         self.baseURL = baseURL
         self.chapterNumber = chapterNumber
         self.chapterNameInternal = chapterName
@@ -78,7 +84,9 @@ public final class QuranPlayerViewModel: ObservableObject {
     }
 
     deinit {
-        MainActor.assumeIsolated { cleanup() }
+        MainActor.assumeIsolated {
+            cleanup()
+        }
     }
 
     // MARK: - Derived Values
@@ -114,6 +122,8 @@ public final class QuranPlayerViewModel: ObservableObject {
         return false
     }
 
+    // MARK: - Configuration
+
     @discardableResult
     public func configureIfNeeded(
         baseURL: URL,
@@ -137,7 +147,7 @@ public final class QuranPlayerViewModel: ObservableObject {
             reciterNameInternal = reciterName
         }
 
-        if let reciterId = reciterId, reciterId > 0 {
+        if let reciterId, reciterId > 0 {
             self.reciterId = reciterId
         }
 
@@ -156,39 +166,6 @@ public final class QuranPlayerViewModel: ObservableObject {
         return baseURLChanged || chapterChanged || reciterChanged || reciterIdChanged || timingSourceChanged
     }
 
-    // MARK: - Lifecycle
-
-    public func startIfNeeded(autoPlay: Bool = true) {
-        shouldAutoStart = autoPlay
-
-        guard hasValidConfiguration else {
-            playbackState = .failed(String(localized: "Audio playback is not configured."))
-            return
-        }
-
-        ensureBackgroundSupport()
-
-        switch playbackState {
-        case .idle, .failed:
-            preparePlayer(autoPlay: autoPlay)
-        case .paused, .ready, .finished:
-            if autoPlay {
-                play()
-            }
-        case .loading, .playing:
-            break
-        }
-    }
-
-    public func stop() {
-        cleanup()
-        cleanupBackgroundHelper()
-        playbackState = .idle
-        currentTime = 0
-        duration = 0
-        currentVerseNumber = nil
-    }
-
     public func updateChapter(number: Int, name: String) {
         guard number != chapterNumber || name != chapterNameInternal else { return }
         chapterNumber = number
@@ -196,7 +173,7 @@ public final class QuranPlayerViewModel: ObservableObject {
         stop()
         prefetchChapterTimingIfNeeded()
     }
-    
+
     public func updateReciter(
         baseURL: URL,
         reciterName: String,
@@ -205,7 +182,10 @@ public final class QuranPlayerViewModel: ObservableObject {
     ) {
         let reciterIdChanged = reciterId.map { $0 != self.reciterId } ?? false
         let timingSourceChanged = timingSource.map { $0 != self.timingSource } ?? false
-        guard baseURL != self.baseURL || reciterName != reciterNameInternal || reciterIdChanged || timingSourceChanged else { return }
+
+        guard baseURL != self.baseURL || reciterName != reciterNameInternal || reciterIdChanged || timingSourceChanged else {
+            return
+        }
 
         let previousState = playbackState
         let resumeVerse = currentVerseNumber
@@ -213,16 +193,17 @@ public final class QuranPlayerViewModel: ObservableObject {
         let shouldAutoPlay = previousState == .playing
 
         self.baseURL = baseURL
-        self.reciterNameInternal = reciterName
+        reciterNameInternal = reciterName
+
         if let reciterId {
             self.reciterId = reciterId
         }
+
         if let timingSource {
             self.timingSource = timingSource
         }
 
         prefetchChapterTimingIfNeeded()
-
         pendingSeekVerse = nil
 
         switch previousState {
@@ -250,28 +231,45 @@ public final class QuranPlayerViewModel: ObservableObject {
             }
 
             startIfNeeded(autoPlay: shouldAutoPlay)
+
         default:
             break
         }
     }
-    
-    /// Get the current verse being played based on timing
-    private func updateCurrentVerse() {
-        guard chapterNumber > 0, reciterId > 0 else { return }
-        
-        // Convert current time from seconds to milliseconds
-        let currentTimeMs = Int(currentTime * 1000)
-        
-        // Get the current verse from timing service
-        let newVerseNumber = AyahTimingService.shared.getCurrentVerse(
-            for: reciterId,
-            surahId: chapterNumber,
-            currentTimeMs: currentTimeMs
-        )
-        // Only update if the verse has changed
-        if newVerseNumber != currentVerseNumber {
-            currentVerseNumber = newVerseNumber
+
+    // MARK: - Lifecycle
+
+    public func startIfNeeded(autoPlay: Bool = true) {
+        shouldAutoStart = autoPlay
+
+        guard hasValidConfiguration else {
+            playbackState = .failed(String(localized: "Audio playback is not configured."))
+            return
         }
+
+        ensureBackgroundSupport()
+
+        switch playbackState {
+        case .idle, .failed:
+            preparePlayer(autoPlay: autoPlay)
+        case .paused, .ready, .finished:
+            if autoPlay { play() }
+        case .loading:
+            if autoPlay, player != nil {
+                play()
+            }
+        case .playing:
+            break
+        }
+    }
+
+    public func stop() {
+        cleanup()
+        cleanupBackgroundHelper()
+        playbackState = .idle
+        currentTime = 0
+        duration = 0
+        currentVerseNumber = nil
     }
 
     // MARK: - Playback Controls
@@ -284,7 +282,6 @@ public final class QuranPlayerViewModel: ObservableObject {
         }
     }
 
-    // when detached or deinit, ensure helper is cleaned up
     private func cleanupBackgroundHelper() {
         backgroundHelper?.detach()
         backgroundHelper = nil
@@ -309,15 +306,8 @@ public final class QuranPlayerViewModel: ObservableObject {
             return
         }
 
-        if let pending = pendingResumeVerse,
-           let timing = AyahTimingService.shared.getTiming(for: reciterId, surahId: chapterNumber, ayahId: pending) {
-            let targetSeconds = Double(timing.start) / 1000.0
-            pendingResumeVerse = nil
-            seek(to: targetSeconds) { [weak self] in
-                guard let self, let player = self.player else { return }
-                player.playImmediately(atRate: self.playbackRate)
-                self.playbackState = .playing
-            }
+        if let pending = pendingResumeVerse {
+            playPendingResumeVerse(pending)
             return
         }
 
@@ -343,37 +333,46 @@ public final class QuranPlayerViewModel: ObservableObject {
 
     // MARK: - Verse Navigation
 
-    /// Seek to a specific verse within the current chapter using timing data
+    /// Seek to a specific verse within the current chapter using timing data.
     @discardableResult
     public func seekToVerse(_ verseNumber: Int) -> Bool {
         guard verseNumber > 0, chapterNumber > 0, reciterId > 0 else { return false }
+
         guard let timing = AyahTimingService.shared.getTiming(
             for: reciterId,
             surahId: chapterNumber,
             ayahId: verseNumber
-        ) else { return false }
+        ) else {
+            return false
+        }
 
         let targetSeconds = Double(timing.start) / 1000.0
 
-        // If player is not ready yet, queue seek and initialize without autoplay
-        guard let _ = player else {
+        // If player is not ready yet, queue seek and initialize without autoplay.
+        guard player != nil else {
             pendingSeekVerse = verseNumber
             startIfNeeded(autoPlay: false)
             return true
         }
 
         let shouldResume = isPlaying
-        if shouldResume { pause() }
+        if shouldResume {
+            pause()
+        }
+
         seek(to: targetSeconds) { [weak self] in
             guard let self else { return }
-            // Ensure highlight updates even when paused
+            // Ensure highlight updates even when paused.
             self.updateCurrentVerse()
-            if shouldResume { self.play() }
+            if shouldResume {
+                self.play()
+            }
         }
+
         return true
     }
 
-    /// Seek to the next verse based on currentVerseNumber and chapter timing bounds
+    /// Seek to the next verse based on currentVerseNumber and chapter timing bounds.
     @discardableResult
     public func seekToNextVerse() -> Bool {
         guard chapterNumber > 0, reciterId > 0 else { return false }
@@ -384,8 +383,10 @@ public final class QuranPlayerViewModel: ObservableObject {
 
         let sortedAyahs = timings.map { $0.ayah }.sorted()
         guard let lastAyah = sortedAyahs.last else { return false }
+
         let current = currentVerseNumber ?? sortedAyahs.first ?? 1
         let nextAyah = min(current + 1, lastAyah)
+
         if nextAyah != current {
             if isPlaying {
                 return seekToVerse(nextAyah)
@@ -394,10 +395,11 @@ public final class QuranPlayerViewModel: ObservableObject {
                 return true
             }
         }
+
         return false
     }
 
-    /// Seek to the previous verse based on currentVerseNumber and chapter timing bounds
+    /// Seek to the previous verse based on currentVerseNumber and chapter timing bounds.
     @discardableResult
     public func seekToPreviousVerse() -> Bool {
         guard chapterNumber > 0, reciterId > 0 else { return false }
@@ -408,8 +410,10 @@ public final class QuranPlayerViewModel: ObservableObject {
 
         let sortedAyahs = timings.map { $0.ayah }.sorted()
         guard let firstAyah = sortedAyahs.first else { return false }
+
         let current = currentVerseNumber ?? firstAyah
         let previousAyah = max(current - 1, firstAyah)
+
         if previousAyah != current {
             if isPlaying {
                 return seekToVerse(previousAyah)
@@ -418,6 +422,7 @@ public final class QuranPlayerViewModel: ObservableObject {
                 return true
             }
         }
+
         return false
     }
 
@@ -425,7 +430,7 @@ public final class QuranPlayerViewModel: ObservableObject {
         isRepeatEnabled.toggle()
     }
 
-    // Preview a verse when paused: update highlight and defer seek to play()
+    /// Preview a verse while paused: update highlight and defer exact seek to play().
     public func setPreviewVerse(_ verseNumber: Int) {
         guard verseNumber > 0 else { return }
         currentVerseNumber = verseNumber
@@ -461,6 +466,95 @@ public final class QuranPlayerViewModel: ObservableObject {
 
     // MARK: - Private Helpers
 
+    /// This is the important cold-start guard.
+    /// If a verse is requested, never fall back to playing from the beginning while
+    /// timings are still loading. Wait for the timing, seek first, then play.
+    private func playPendingResumeVerse(_ verseNumber: Int) {
+        if let timing = AyahTimingService.shared.getTiming(
+            for: reciterId,
+            surahId: chapterNumber,
+            ayahId: verseNumber
+        ) {
+            playVerse(verseNumber, using: timing)
+            return
+        }
+
+        playbackState = .loading
+        pendingResumeTask?.cancel()
+
+        let expectedReciterId = reciterId
+        let expectedChapterNumber = chapterNumber
+        let expectedVerseNumber = verseNumber
+
+        pendingResumeTask = Task { [weak self] in
+            _ = await AyahTimingService.shared.refreshChapterTimings(
+                for: expectedReciterId,
+                surahId: expectedChapterNumber
+            )
+
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.pendingResumeTask = nil
+
+                guard self.reciterId == expectedReciterId,
+                      self.chapterNumber == expectedChapterNumber,
+                      self.pendingResumeVerse == expectedVerseNumber
+                else { return }
+
+                if let timing = AyahTimingService.shared.getTiming(
+                    for: expectedReciterId,
+                    surahId: expectedChapterNumber,
+                    ayahId: expectedVerseNumber
+                ) {
+                    self.playVerse(expectedVerseNumber, using: timing)
+                    return
+                }
+
+                if expectedVerseNumber == 1 {
+                    self.pendingResumeVerse = nil
+                    self.player?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+                    self.player?.playImmediately(atRate: self.playbackRate)
+                    self.playbackState = .playing
+                    return
+                }
+
+                self.playbackState = .failed(String(localized: "Unable to locate timing for the selected verse."))
+            }
+        }
+    }
+
+    private func playVerse(_ verseNumber: Int, using timing: (start: Int, end: Int)) {
+        let targetSeconds = Double(timing.start) / 1000.0
+        pendingResumeVerse = nil
+        currentVerseNumber = verseNumber
+
+        seek(to: targetSeconds) { [weak self] in
+            guard let self, let player = self.player else { return }
+            player.playImmediately(atRate: self.playbackRate)
+            self.playbackState = .playing
+            self.updateCurrentVerse()
+        }
+    }
+
+    /// Get the current verse being played based on timing.
+    private func updateCurrentVerse() {
+        guard chapterNumber > 0, reciterId > 0 else { return }
+
+        // Convert current time from seconds to milliseconds.
+        let currentTimeMs = Int(currentTime * 1000)
+        let newVerseNumber = AyahTimingService.shared.getCurrentVerse(
+            for: reciterId,
+            surahId: chapterNumber,
+            currentTimeMs: currentTimeMs
+        )
+
+        if newVerseNumber != currentVerseNumber {
+            currentVerseNumber = newVerseNumber
+        }
+    }
+
     private func preparePlayer(autoPlay: Bool) {
         cleanup()
         playbackState = .loading
@@ -469,6 +563,7 @@ public final class QuranPlayerViewModel: ObservableObject {
 
         prepareTask = Task { [weak self] in
             guard let self else { return }
+
             do {
                 let audioURL = try await self.resolveAudioURLForPlayback()
                 guard !Task.isCancelled else { return }
@@ -494,9 +589,14 @@ public final class QuranPlayerViewModel: ObservableObject {
 
         prefetchTask?.cancel()
         lastPrefetchKey = prefetchKey
+
         prefetchTask = Task { [weak self] in
-            _ = await AyahTimingService.shared.refreshChapterTimings(for: currentReciterId, surahId: currentChapterNumber)
-            await MainActor.run {
+            _ = await AyahTimingService.shared.refreshChapterTimings(
+                for: currentReciterId,
+                surahId: currentChapterNumber
+            )
+
+            await MainActor.run { [weak self] in
                 guard let self else { return }
                 if self.lastPrefetchKey == prefetchKey {
                     self.prefetchTask = nil
@@ -508,28 +608,37 @@ public final class QuranPlayerViewModel: ObservableObject {
     private func resolveAudioURLForPlayback() async throws -> URL {
         switch timingSource {
         case .itqan:
-            guard let audioURL = await AyahTimingService.shared.refreshChapterTimings(for: reciterId, surahId: chapterNumber)
-                ?? AyahTimingService.shared.getRemoteAudioURL(for: reciterId, surahId: chapterNumber) else {
+            guard let audioURL = await AyahTimingService.shared.refreshChapterTimings(
+                for: reciterId,
+                surahId: chapterNumber
+            ) ?? AyahTimingService.shared.getRemoteAudioURL(
+                for: reciterId,
+                surahId: chapterNumber
+            ) else {
                 throw TimingProviderError.missingData
             }
             return audioURL
+
         case .both, .mp3quran:
             guard let baseURL else {
                 throw TimingProviderError.invalidURL
             }
             let chapterPathComponent = String(format: "%03d.mp3", chapterNumber)
             return baseURL.appendingPathComponent(chapterPathComponent)
+
         case .none:
             throw TimingProviderError.unsupportedTimingSource
         }
     }
 
     private func setupPlayer(with audioURL: URL) {
-        AppLogger.shared.info("QuranPlayer: Loading audio from URL: \(audioURL.absoluteString)", category: .network)
+        AppLogger.shared.info(
+            "QuranPlayer: Loading audio from URL: \(audioURL.absoluteString)",
+            category: .network
+        )
 
         let asset = AVURLAsset(url: audioURL)
         let playerItem = AVPlayerItem(asset: asset)
-
         let player = AVPlayer(playerItem: playerItem)
         player.automaticallyWaitsToMinimizeStalling = true
         self.player = player
@@ -543,25 +652,40 @@ public final class QuranPlayerViewModel: ObservableObject {
     private func observeStatus(for item: AVPlayerItem) {
         statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             guard let self else { return }
+
             Task { @MainActor in
                 switch item.status {
                 case .readyToPlay:
                     self.updateDuration(from: item)
+
+                    if let pending = self.pendingSeekVerse {
+                        self.pendingSeekVerse = nil
+                        _ = self.seekToVerse(pending)
+
+                        if self.shouldAutoStart {
+                            self.pendingResumeVerse = pending
+                            self.play()
+                        } else {
+                            self.playbackState = .ready
+                        }
+                        return
+                    }
+
                     if self.shouldAutoStart {
                         self.play()
                     } else {
                         self.playbackState = .ready
                     }
-                    // If a pending seek was requested before readiness, perform it now
-                    if let pending = self.pendingSeekVerse {
-                        self.pendingSeekVerse = nil
-                        _ = self.seekToVerse(pending)
-                    }
+
                 case .failed:
-                    self.playbackState = .failed(item.error?.localizedDescription ?? String(localized: "Unable to load audio."))
+                    self.playbackState = .failed(
+                        item.error?.localizedDescription ?? String(localized: "Unable to load audio.")
+                    )
                     self.isBuffering = false
+
                 case .unknown:
                     break
+
                 @unknown default:
                     break
                 }
@@ -572,6 +696,7 @@ public final class QuranPlayerViewModel: ObservableObject {
     private func observeTimeControl(for player: AVPlayer) {
         timeControlObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] player, _ in
             guard let self else { return }
+
             Task { @MainActor in
                 switch player.timeControlStatus {
                 case .waitingToPlayAtSpecifiedRate:
@@ -592,7 +717,6 @@ public final class QuranPlayerViewModel: ObservableObject {
                 let seconds = CMTimeGetSeconds(time)
                 if !self.isScrubbing, seconds.isFinite {
                     self.currentTime = seconds
-                    // Update the current verse based on playback time
                     self.updateCurrentVerse()
                 }
 
@@ -625,8 +749,8 @@ public final class QuranPlayerViewModel: ObservableObject {
 
     private func seek(to seconds: Double, completion: (@MainActor @Sendable () -> Void)? = nil) {
         guard let player else { return }
-        let cmTime = CMTime(seconds: seconds, preferredTimescale: 600)
 
+        let cmTime = CMTime(seconds: seconds, preferredTimescale: 600)
         player.seek(to: cmTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, completion] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -663,8 +787,13 @@ public final class QuranPlayerViewModel: ObservableObject {
         player?.pause()
         player = nil
         isBuffering = false
+
         prepareTask?.cancel()
         prepareTask = nil
+
+        pendingResumeTask?.cancel()
+        pendingResumeTask = nil
+
         prefetchTask?.cancel()
         prefetchTask = nil
         lastPrefetchKey = nil
