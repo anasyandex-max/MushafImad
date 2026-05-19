@@ -3,7 +3,7 @@
 //  Mushaf
 //
 //  Created by Ibrahim Qraiqe on 26/10/2025.
-//  Fork patch: adds direct verse tap support and shorter long press.
+//  Fork patch: normal tap is reserved for page chrome; short long press selects verse.
 //
 
 import SwiftUI
@@ -32,10 +32,7 @@ public struct QuranPageView<Header: View, Footer: View>: View {
     public let initialHighlightedVerse: Verse?
     @Binding public var selectedVerse: Verse?
 
-    /// Fired immediately on normal verse tap.
-    public var onVerseTap: ((Verse) -> Void)? = nil
-
-    /// Fired on verse long press.
+    /// Fired on a short long press over a verse highlight area.
     public var onVerseLongPress: ((Verse) -> Void)? = nil
 
     private let headerBuilder: () -> Header
@@ -49,7 +46,6 @@ public struct QuranPageView<Header: View, Footer: View>: View {
         page: Page,
         initialHighlightedVerse: Verse?,
         selectedVerse: Binding<Verse?>,
-        onVerseTap: ((Verse) -> Void)? = nil,
         onVerseLongPress: ((Verse) -> Void)? = nil,
         @ViewBuilder header: @escaping () -> Header,
         @ViewBuilder footer: @escaping () -> Footer
@@ -58,7 +54,6 @@ public struct QuranPageView<Header: View, Footer: View>: View {
         self.page = page
         self.initialHighlightedVerse = initialHighlightedVerse
         self._selectedVerse = selectedVerse
-        self.onVerseTap = onVerseTap
         self.onVerseLongPress = onVerseLongPress
         self.headerBuilder = header
         self.footerBuilder = footer
@@ -128,21 +123,8 @@ public struct QuranPageView<Header: View, Footer: View>: View {
             selectedVerse: selectedVerse,
             highlightedVerse: initialHighlightedVerse,
             pressingVerseID: $pressingVerseID,
-            onVerseTap: handleVerseTap,
             onVerseLongPress: handleVerseLongPress
         )
-    }
-
-    private func handleVerseTap(_ verse: Verse) {
-        withAnimation {
-            selectedVerse = verse
-
-            #if canImport(UIKit)
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            #endif
-
-            onVerseTap?(verse)
-        }
     }
 
     private func handleVerseLongPress(_ verse: Verse) {
@@ -170,13 +152,12 @@ private struct LineImageView: View {
     let highlightedVerse: Verse?
     @Binding var pressingVerseID: Int?
 
-    var onVerseTap: (Verse) -> Void
     var onVerseLongPress: (Verse) -> Void
 
     // Original line image dimensions (all line images are 1440 x 232 pixels).
     private let originalLineSize = CGSize(width: 1440, height: 232)
 
-    // Timer to delay highlight activation.
+    // Timer to delay highlight activation while filtering accidental touches.
     @State private var highlightTimer: Timer?
 
     var selectedCorners: UIRectCorner {
@@ -202,20 +183,15 @@ private struct LineImageView: View {
                 .cornerRadius(8, corners: selectedCorners)
                 .frame(width: highlightWidth, height: highlightHeight)
                 .contentShape(Rectangle())
-                .onTapGesture {
-                    highlightTimer?.invalidate()
-                    highlightTimer = nil
-                    pressingVerseID = nil
-                    onVerseTap(verse)
-                }
                 .onLongPressGesture(
-                    minimumDuration: 0.35,
+                    minimumDuration: 0.30,
+                    maximumDistance: 24,
                     pressing: { isPressing in
                         if isPressing {
-                            // Show feedback quickly, but still filter accidental scroll touches.
+                            // Give the user quick visual feedback without treating a normal tap as verse actions.
                             highlightTimer?.invalidate()
                             let verseID = verse.verseID
-                            highlightTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { _ in
+                            highlightTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: false) { _ in
                                 DispatchQueue.main.async {
                                     pressingVerseID = verseID
                                 }
