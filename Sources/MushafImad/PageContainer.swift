@@ -4,18 +4,15 @@
 //
 // Created by Ibrahim Qraiqe on 31/10/2025.
 // Fork patch: tap toggles page chrome, short long press opens verse actions.
-// Patch: page number can be rendered beside the Juz label without changing page scale.
+// Patch: page number can be rendered inline with the page header.
 //
 
 import SwiftUI
 
 /// Controls where the Quran page number is rendered.
 public enum QuranPageNumberPosition: Equatable {
-    /// Render the page number beside the Juz label in the page header.
-    case besideJuz
-
-    /// Backward-compatible name from the previous patch.
-    /// This now behaves like `besideJuz` instead of adding a separate row above the header.
+    /// Render the page number inline in the existing header, beside the Juz text.
+    /// This does not add a new row above the Mushaf page.
     case top
 
     /// Render the page number in the original footer position.
@@ -109,7 +106,7 @@ public struct PageContainer: View {
     @ViewBuilder
     private func pageHeader(for pageData: Page) -> some View {
         switch pageNumberPosition {
-        case .besideJuz, .top:
+        case .top:
             PageHeaderWithPageNumberView(page: pageData)
         case .bottom, .hidden:
             PageHeaderView(page: pageData)
@@ -121,40 +118,35 @@ public struct PageContainer: View {
         switch pageNumberPosition {
         case .bottom:
             PageFooterView(pageNumber: pageData.number, isRight: pageData.isRight)
-
-        case .besideJuz, .top:
-            // Keep the original footer height reserved, but make it invisible.
-            // Without this placeholder, `QuranPageView` gives the freed space to `Spacer()`,
-            // so the last Quran lines move down and can appear behind the app tab bar.
-            PageFooterView(pageNumber: pageData.number, isRight: pageData.isRight)
-                .opacity(0)
-                .accessibilityHidden(true)
-
-        case .hidden:
+        case .top, .hidden:
             EmptyView()
         }
     }
 }
 
+/// Header that keeps the same single-row layout as `PageHeaderView`,
+/// but places the page-number badge inline beside the Juz text.
 private struct PageHeaderWithPageNumberView: View {
     let page: Page
     var horizentalPadding: CGFloat = 16
 
     var body: some View {
-        HStack {
-            let headerDisplay = getPageHeaderDisplay(page: page)
+        let headerDisplay = PageHeaderView(page: page).getPageHeaderDisplay(page: page)
 
-            HStack(spacing: 8) {
+        HStack {
+            HStack(spacing: 10) {
                 if let juz = headerDisplay.juz {
                     Text(juz)
                         .font(.system(size: 14, weight: .medium))
                 }
 
-                CompactPageNumberBadge(pageNumber: page.number)
+                PageFooterView(pageNumber: page.number, isRight: true, hPadding: 0)
+                    .frame(width: 48, height: 30)
+                    .fixedSize()
+                    .allowsHitTesting(false)
 
                 if let hizb = headerDisplay.hizb {
                     HizbProgressView(hizbInfo: hizb)
-                        .padding(.leading, 14)
                 }
             }
 
@@ -169,35 +161,5 @@ private struct PageHeaderWithPageNumberView: View {
         .foregroundStyle(.brand900)
         .padding(.horizontal, horizentalPadding)
         .environment(\.layoutDirection, .rightToLeft)
-    }
-
-    private func getPageHeaderDisplay(page: Page) -> (juz: String?, hizb: HizbDisplayInfo?, titles: [String]) {
-        guard let header = page.header1441 else { return (nil, nil, []) }
-
-        let titles: [String] = header.chapters.map { $0.arabicTitle }
-        let juzDisplay: String? = header.part.map { "الجزء \($0.number)" }
-        let hizbDisplay: HizbDisplayInfo? = header.quarter.map { quarter in
-            HizbDisplayInfo(number: quarter.hizbNumber, hizbFraction: quarter.hizbFraction)
-        }
-
-        return (juzDisplay, hizbDisplay, titles)
-    }
-}
-
-private struct CompactPageNumberBadge: View {
-    let pageNumber: Int
-
-    var body: some View {
-        MushafAssets.image(named: "pagenumb")
-            .resizable()
-            .frame(width: 34, height: 21)
-            .overlay {
-                Text(pageNumber.toArabic)
-                    .font(.uthmanicTN1Bold(size: 25))
-                    .minimumScaleFactor(0.25)
-                    .offset(y: -1.5)
-            }
-            .allowsHitTesting(false)
-            .accessibilityLabel("صفحة \(pageNumber)")
     }
 }
