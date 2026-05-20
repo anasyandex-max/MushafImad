@@ -1,11 +1,3 @@
-//
-// PageHeader.swift
-// MushafImad
-//
-// Created by Ibrahim Qraiqe on 31/10/2025.
-// Patch: show the page number inline beside the Juz text when requested.
-//
-
 import SwiftUI
 
 public struct PageHeaderView: View {
@@ -25,7 +17,6 @@ public struct PageHeaderView: View {
 
     public var body: some View {
         HStack {
-            // Use the PageHeader functionality for formatted display.
             let headerDisplay = getPageHeaderDisplay(page: page)
 
             HStack(spacing: showsPageNumber ? 8 : 25) {
@@ -56,32 +47,30 @@ public struct PageHeaderView: View {
         .environment(\.layoutDirection, .rightToLeft)
     }
 
+    /// Compact page-number badge that fits inside the original header row height.
+    /// Do not use PageFooterView here because it is taller and changes the page layout.
     private var inlinePageNumber: some View {
         MushafAssets.image(named: "pagenumb")
             .resizable()
-            .frame(width: 38, height: 24)
+            .frame(width: 32, height: 20)
             .overlay {
                 Text(page.number.toArabic)
-                    .font(.uthmanicTN1Bold(size: 24))
+                    .font(.uthmanicTN1Bold(size: 19))
                     .frame(maxWidth: .infinity)
                     .minimumScaleFactor(0.2)
                     .offset(y: -1)
             }
+            .frame(width: 34, height: 24)
             .allowsHitTesting(false)
     }
 
     public func getPageHeaderDisplay(page: Page) -> (juz: String?, hizb: HizbDisplayInfo?, titles: [String]) {
-        // Get the header for the current Mushaf type (defaulting to 1441).
         guard let header = page.header1441 else {
             return (nil, nil, [])
         }
 
         let titles: [String] = header.chapters.map { $0.arabicTitle }
-
-        // Format Juz display.
         let juzDisplay: String? = header.part.map { "الجزء \($0.number)" }
-
-        // Format Hizb display.
         let hizbDisplay: HizbDisplayInfo? = header.quarter.map { quarter in
             HizbDisplayInfo(
                 number: quarter.hizbNumber,
