@@ -1,35 +1,18 @@
 //
-// PageContainer.swift
-// MushafImad
+//  PageContainer.swift
+//  MushafImad
 //
-// Created by Ibrahim Qraiqe on 31/10/2025.
-// Fork patch: tap toggles page chrome, short long press opens verse actions.
-// Patch: page number can be rendered inline with the page header.
+//  Created by Ibrahim Qraiqe on 31/10/2025.
+//  Fork patch: tap toggles page chrome, short long press opens verse actions.
 //
 
 import SwiftUI
-
-/// Controls where the Quran page number is rendered.
-public enum QuranPageNumberPosition: Equatable {
-    /// Render the page number inline in the existing header, beside the Juz text.
-    /// This does not add a new row above the Mushaf page.
-    case top
-
-    /// Render the page number in the original footer position.
-    case bottom
-
-    /// Do not render the page number.
-    case hidden
-}
 
 /// Thin wrapper that loads a `Page` model, then renders it via `QuranPageView`.
 public struct PageContainer: View {
     public let pageNumber: Int
     public let highlightedVerse: Verse?
     @Binding public var selectedVerse: Verse?
-
-    /// Where to show the Quran page number.
-    public let pageNumberPosition: QuranPageNumberPosition
 
     /// Fired when the user short-long-presses a verse highlight area.
     public let onVerseLongPress: (Verse) -> Void
@@ -46,14 +29,12 @@ public struct PageContainer: View {
         pageNumber: Int,
         highlightedVerse: Verse?,
         selectedVerse: Binding<Verse?>,
-        pageNumberPosition: QuranPageNumberPosition = .bottom,
         onVerseLongPress: @escaping (Verse) -> Void,
         onTap: @escaping () -> Void
     ) {
         self.pageNumber = pageNumber
         self.highlightedVerse = highlightedVerse
         self._selectedVerse = selectedVerse
-        self.pageNumberPosition = pageNumberPosition
         self.onVerseLongPress = onVerseLongPress
         self.onTap = onTap
     }
@@ -69,10 +50,10 @@ public struct PageContainer: View {
                         selectedVerse: $selectedVerse,
                         onVerseLongPress: onVerseLongPress,
                         header: {
-                            pageHeader(for: pageData)
+                            PageHeaderView(page: pageData)
                         },
                         footer: {
-                            pageFooter(for: pageData)
+                            PageFooterView(pageNumber: pageData.number, isRight: pageData.isRight)
                         }
                     )
                 } else {
@@ -101,65 +82,5 @@ public struct PageContainer: View {
                 Self.pageCache[pageNumber] = data
             }
         }
-    }
-
-    @ViewBuilder
-    private func pageHeader(for pageData: Page) -> some View {
-        switch pageNumberPosition {
-        case .top:
-            PageHeaderWithPageNumberView(page: pageData)
-        case .bottom, .hidden:
-            PageHeaderView(page: pageData)
-        }
-    }
-
-    @ViewBuilder
-    private func pageFooter(for pageData: Page) -> some View {
-        switch pageNumberPosition {
-        case .bottom:
-            PageFooterView(pageNumber: pageData.number, isRight: pageData.isRight)
-        case .top, .hidden:
-            EmptyView()
-        }
-    }
-}
-
-/// Header that keeps the same single-row layout as `PageHeaderView`,
-/// but places the page-number badge inline beside the Juz text.
-private struct PageHeaderWithPageNumberView: View {
-    let page: Page
-    var horizentalPadding: CGFloat = 16
-
-    var body: some View {
-        let headerDisplay = PageHeaderView(page: page).getPageHeaderDisplay(page: page)
-
-        HStack {
-            HStack(spacing: 10) {
-                if let juz = headerDisplay.juz {
-                    Text(juz)
-                        .font(.system(size: 14, weight: .medium))
-                }
-
-                PageFooterView(pageNumber: page.number, isRight: true, hPadding: 0)
-                    .frame(width: 48, height: 30)
-                    .fixedSize()
-                    .allowsHitTesting(false)
-
-                if let hizb = headerDisplay.hizb {
-                    HizbProgressView(hizbInfo: hizb)
-                }
-            }
-
-            Spacer()
-
-            ForEach(headerDisplay.titles, id: \.self) { title in
-                Text("سورة \(title)")
-                    .font(.chapterNames(size: 24))
-            }
-        }
-        .font(.system(size: 12, weight: .semibold))
-        .foregroundStyle(.brand900)
-        .padding(.horizontal, horizentalPadding)
-        .environment(\.layoutDirection, .rightToLeft)
     }
 }
