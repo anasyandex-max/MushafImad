@@ -301,19 +301,33 @@ public final class QuranPlayerViewModel: ObservableObject {
     }
 
     public func play() {
-        guard let player else {
-            preparePlayer(autoPlay: true)
-            return
-        }
-
-        if let pending = pendingResumeVerse {
-            playPendingResumeVerse(pending)
-            return
-        }
-
-        player.playImmediately(atRate: playbackRate)
-        playbackState = .playing
+    guard let player else {
+        preparePlayer(autoPlay: true)
+        return
     }
+
+    // مهم: إذا كان هناك طلب تشغيل آية محددة، نعطيه الأولوية
+    // حتى لو كان المشغل في حالة finished.
+    if let pending = pendingResumeVerse {
+        playPendingResumeVerse(pending)
+        return
+    }
+
+    // إذا انتهى الملف، لا نحاول التشغيل من نهاية الصوت.
+    // نرجع للبداية ثم نشغل.
+    if playbackState == .finished {
+        seek(to: 0) { [weak self] in
+            guard let self, let player = self.player else { return }
+            player.playImmediately(atRate: self.playbackRate)
+            self.playbackState = .playing
+            self.updateCurrentVerse()
+        }
+        return
+    }
+
+    player.playImmediately(atRate: playbackRate)
+    playbackState = .playing
+}
 
     public func pause() {
         guard let player, playbackState == .playing else { return }
