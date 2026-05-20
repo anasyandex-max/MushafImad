@@ -1,12 +1,13 @@
 //
-//  QuranPageView.swift
-//  Mushaf
+// QuranPageView.swift
+// Mushaf
 //
-//  Created by Ibrahim Qraiqe on 26/10/2025.
-//  Fork patch: normal tap is reserved for page chrome; short long press selects verse.
+// Created by Ibrahim Qraiqe on 26/10/2025.
+// Fork patch: normal tap is reserved for page chrome; short long press selects verse.
 //
 
 import SwiftUI
+
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -17,6 +18,7 @@ public struct SelectedVerseRectKey: PreferenceKey {
 
     public static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
         guard let newRect = nextValue() else { return }
+
         if let current = value {
             // Keep the rectangle that is visually higher on screen (smaller minY).
             value = newRect.minY < current.minY ? newRect : current
@@ -30,6 +32,7 @@ public struct QuranPageView<Header: View, Footer: View>: View {
     public let pageNumber: Int
     public var page: Page
     public let initialHighlightedVerse: Verse?
+
     @Binding public var selectedVerse: Verse?
 
     /// Fired on a short long press over a verse highlight area.
@@ -64,8 +67,17 @@ public struct QuranPageView<Header: View, Footer: View>: View {
             let availableWidth = reader.size.width
             let availableHeight = reader.size.height
             let isLandscape = availableWidth > availableHeight
-            // Calculate line height based on the aspect ratio (1440:232).
-            let lineHeight = availableWidth / 1440 * 232
+
+            // Original line image dimensions are 1440 x 232.
+            let originalLineWidth: CGFloat = 1440
+            let originalLineHeight: CGFloat = 232
+
+            // The library displays only the useful middle part of each line image.
+            let portraitVisibleLineFactor: CGFloat = 0.73
+            let landscapeVisibleLineFactor: CGFloat = 0.70
+
+            // Natural size based on width only.
+            let naturalLineImageHeight = availableWidth / originalLineWidth * originalLineHeight
 
             if isLandscape {
                 ScrollView(.vertical, showsIndicators: false) {
@@ -76,13 +88,17 @@ public struct QuranPageView<Header: View, Footer: View>: View {
                             lineView(
                                 line: line,
                                 availableWidth: availableWidth,
-                                availableHeight: lineHeight
+                                availableHeight: naturalLineImageHeight
                             )
-                            .frame(width: availableWidth, height: lineHeight * 0.7)
+                            .frame(
+                                width: availableWidth,
+                                height: naturalLineImageHeight * landscapeVisibleLineFactor
+                            )
                             .id("\(pageNumber)-\(line)")
                         }
 
-                        footerBuilder().padding(.vertical, 40)
+                        footerBuilder()
+                            .padding(.vertical, 40)
                     }
                     .frame(width: availableWidth)
                 }
@@ -90,30 +106,62 @@ public struct QuranPageView<Header: View, Footer: View>: View {
                 .scrollBounceBehavior(.basedOnSize)
                 .id("landscape-\(pageNumber)")
             } else {
+                // Reserve space for the page header/footer so the 15 lines never get clipped.
+                // If your footer is hidden because page number is at the top, this still works;
+                // it just gives the page a little extra safety margin.
+                let headerHeight: CGFloat = 38
+                let footerHeight: CGFloat = 26
+
+                let naturalVisibleLineHeight = naturalLineImageHeight * portraitVisibleLineFactor
+                let availableLinesHeight = max(1, availableHeight - headerHeight - footerHeight)
+
+                // Fit all 15 lines into the available height.
+                let fittedVisibleLineHeight = min(
+                    naturalVisibleLineHeight,
+                    availableLinesHeight / 15
+                )
+
+                // Convert the fitted visible height back to a fitted full image width.
+                let fittedLineImageHeight = fittedVisibleLineHeight / portraitVisibleLineFactor
+                let fittedWidth = min(
+                    availableWidth,
+                    max(1, fittedLineImageHeight / originalLineHeight * originalLineWidth)
+                )
+
+                let finalLineImageHeight = fittedWidth / originalLineWidth * originalLineHeight
+                let finalVisibleLineHeight = finalLineImageHeight * portraitVisibleLineFactor
+
                 VStack(spacing: 0) {
                     headerBuilder()
+                        .frame(width: fittedWidth, height: headerHeight)
 
                     ForEach(0...14, id: \.self) { line in
                         lineView(
                             line: line,
-                            availableWidth: availableWidth,
-                            availableHeight: availableHeight
+                            availableWidth: fittedWidth,
+                            availableHeight: finalVisibleLineHeight
                         )
-                        .frame(width: availableWidth, height: lineHeight * 0.73)
+                        .frame(width: fittedWidth, height: finalVisibleLineHeight)
                         .id("\(pageNumber)-\(line)")
                     }
 
-                    Spacer()
+                    Spacer(minLength: 0)
+
                     footerBuilder()
+                        .frame(width: fittedWidth, height: footerHeight)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .id("portrait-\(pageNumber)")
+                .frame(width: availableWidth, height: availableHeight, alignment: .top)
+                .id("portrait-\(pageNumber)-\(Int(fittedWidth))")
             }
         }
         .id(pageNumber)
     }
 
-    private func lineView(line: Int, availableWidth: CGFloat, availableHeight: CGFloat) -> some View {
+    private func lineView(
+        line: Int,
+        availableWidth: CGFloat,
+        availableHeight: CGFloat
+    ) -> some View {
         LineImageView(
             pageNumber: pageNumber,
             chapterheader: Array(page.chapterHeaders1441),
@@ -150,6 +198,7 @@ private struct LineImageView: View {
     let container: CGSize
     let selectedVerse: Verse?
     let highlightedVerse: Verse?
+
     @Binding var pressingVerseID: Int?
 
     var onVerseLongPress: (Verse) -> Void
@@ -171,7 +220,10 @@ private struct LineImageView: View {
     }
 
     @ViewBuilder
-    private func verseHighlightsView(verse: Verse, geometry: GeometryProxy) -> some View {
+    private func verseHighlightsView(
+        verse: Verse,
+        geometry: GeometryProxy
+    ) -> some View {
         ForEach(verse.highlights1441.filter { $0.line == line }, id: \.self) { highlight in
             let visualLeftX = geometry.size.width * CGFloat(1.0 - highlight.right)
             let visualRightX = geometry.size.width * CGFloat(1.0 - highlight.left)
@@ -190,6 +242,7 @@ private struct LineImageView: View {
                         if isPressing {
                             // Give the user quick visual feedback without treating a normal tap as verse actions.
                             highlightTimer?.invalidate()
+
                             let verseID = verse.verseID
                             highlightTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: false) { _ in
                                 DispatchQueue.main.async {
@@ -209,12 +262,17 @@ private struct LineImageView: View {
                         onVerseLongPress(verse)
                     }
                 )
-                .position(x: visualLeftX + highlightWidth / 2, y: highlightHeight * 0.8)
+                .position(
+                    x: visualLeftX + highlightWidth / 2,
+                    y: highlightHeight * 0.8
+                )
                 .background(
                     GeometryReader { proxy in
                         Color.clear.preference(
                             key: SelectedVerseRectKey.self,
-                            value: shouldHighlight(verse) ? proxy.frame(in: .named("MushafRoot")) : nil
+                            value: shouldHighlight(verse)
+                                ? proxy.frame(in: .named("MushafRoot"))
+                                : nil
                         )
                     }
                 )
@@ -253,7 +311,10 @@ private struct LineImageView: View {
                     if chapterheader.line == line {
                         MushafAssets.image(named: "suraNameBar")
                             .resizable()
-                            .frame(width: containerWidth * 0.9, height: scaledImageHeight * 0.8)
+                            .frame(
+                                width: containerWidth * 0.9,
+                                height: scaledImageHeight * 0.8
+                            )
                             .position(x: chapterX, y: chapterY + 8)
                             .allowsHitTesting(false)
                     }
