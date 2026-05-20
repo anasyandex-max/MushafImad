@@ -1,23 +1,15 @@
-//
-// PageContainer.swift
-// MushafImad
-//
-// Created by Ibrahim Qraiqe on 31/10/2025.
-// Fork patch: tap toggles page chrome, short long press opens verse actions.
-// Patch: page number can be rendered inline beside the Juz text.
-//
-
 import SwiftUI
 
 /// Controls where the Quran page number is rendered.
 public enum QuranPageNumberPosition: Equatable {
     /// Render the page number inline in the existing header, beside the Juz text.
+    /// The original footer space is kept invisible so the Mushaf layout does not move.
     case top
 
     /// Render the page number in the original footer position.
     case bottom
 
-    /// Do not render the page number.
+    /// Do not render the page number and do not reserve the footer number space.
     case hidden
 }
 
@@ -43,7 +35,7 @@ public struct PageContainer: View {
         pageNumber: Int,
         highlightedVerse: Verse?,
         selectedVerse: Binding<Verse?>,
-        pageNumberPosition: QuranPageNumberPosition = .top,
+        pageNumberPosition: QuranPageNumberPosition = .bottom,
         onVerseLongPress: @escaping (Verse) -> Void,
         onTap: @escaping () -> Void
     ) {
@@ -88,7 +80,6 @@ public struct PageContainer: View {
             )
         }
         .task {
-            // Check cache first to avoid repeated Realm queries.
             guard pageData == nil else { return }
 
             if let cached = Self.pageCache[pageNumber] {
@@ -108,7 +99,16 @@ public struct PageContainer: View {
         switch pageNumberPosition {
         case .bottom:
             PageFooterView(pageNumber: pageData.number, isRight: pageData.isRight)
-        case .top, .hidden:
+
+        case .top:
+            // Keep the original footer badge in the layout but make it invisible.
+            // This preserves the old Mushaf vertical geometry exactly; only the visible
+            // number moves beside the Juz text.
+            PageFooterView(pageNumber: pageData.number, isRight: pageData.isRight)
+                .opacity(0)
+                .accessibilityHidden(true)
+
+        case .hidden:
             EmptyView()
         }
     }
