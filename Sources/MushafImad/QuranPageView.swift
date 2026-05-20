@@ -151,7 +151,7 @@ public struct QuranPageView<Header: View, Footer: View>: View {
                         .frame(width: fittedWidth, height: footerHeight)
                 }
                 .frame(width: availableWidth, height: availableHeight, alignment: .top)
-                .id("portrait-\(pageNumber)-\(Int(fittedWidth))")
+                .id("portrait-\(pageNumber)")
             }
         }
         .id(pageNumber)
