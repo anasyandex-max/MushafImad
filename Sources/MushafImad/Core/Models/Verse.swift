@@ -48,9 +48,16 @@ extension Verse {
     @MainActor
     public static var mock: Verse {
         let v = Verse()
-        v.chapter = Chapter.mock
+        // لا نربط chapter هنا لأن Chapter.mock غير موجود في هذه النسخة من MushafImad.
+        // هذا mock مخصص للـ previews/compatibility فقط ولا يؤثر على بيانات القرآن الفعلية من Realm.
+        v.verseID = 1
+        v.humanReadableID = "1_1"
         v.number = 1
         v.text = "بِسمِ اللَّهِ الرَّحمنِ الرَّحيمِ"
+        v.textWithoutTashkil = "بسم الله الرحمن الرحيم"
+        v.uthmanicHafsText = "بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ"
+        v.hafsSmartText = "بِسمِ اللَّهِ الرَّحمنِ الرَّحيمِ"
+        v.searchableText = "بسم الله الرحمن الرحيم"
         return v
     }
 }
